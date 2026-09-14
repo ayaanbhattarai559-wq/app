@@ -93,9 +93,19 @@ def _resync_total_stock(product: models.Product) -> None:
 def create_product(db: Session, data: schemas.ProductCreate) -> models.Product:
     payload = data.model_dump(exclude={"variants"})
     product = models.Product(**payload)
+    # Assign the product its own id up front so variant ids can be scoped to
+    # it (product.id is normally left to the column default, which doesn't
+    # fire until flush -- generate it here instead so we can use it below).
+    if not product.id:
+        product.id = f"prod-{uuid.uuid4().hex[:10]}"
     for v in data.variants:
+        # Never trust a client-supplied variant id as globally unique -- it's
+        # commonly just a slug of color+size (e.g. "royal-blue-s"), which
+        # collides the moment two products share a color/size combination.
+        # Always mint our own, scoped to this product.
+        variant_id = f"{product.id}-{uuid.uuid4().hex[:8]}"
         product.variants.append(models.ProductVariant(
-            id=v.id or f"{product.id or uuid.uuid4().hex[:8]}-{uuid.uuid4().hex[:6]}",
+            id=variant_id,
             color=v.color, size=v.size, stock=v.stock, sku=v.sku, barcode=v.barcode,
         ))
     _resync_total_stock(product)
@@ -116,17 +126,24 @@ def update_product(db: Session, product_id: str, data: schemas.ProductUpdate) ->
         existing_by_id = {v.id: v for v in product.variants}
         keep_ids = set()
         for v in data.variants:
-            vid = v.id or f"{product_id}-{uuid.uuid4().hex[:6]}"
-            keep_ids.add(vid)
-            if vid in existing_by_id:
+            # Only trust a client-supplied id if it matches a variant that
+            # genuinely already belongs to THIS product (i.e. it's an id we
+            # ourselves handed back earlier). Anything else -- including a
+            # client-invented slug for a brand-new variant -- gets a fresh
+            # server-generated id, so it can never collide with another
+            # product's variant (see create_product for the same rationale).
+            if v.id and v.id in existing_by_id:
+                vid = v.id
                 ev = existing_by_id[vid]
                 ev.color, ev.size, ev.stock = v.color, v.size, v.stock
                 ev.sku, ev.barcode = v.sku, v.barcode
             else:
+                vid = f"{product_id}-{uuid.uuid4().hex[:8]}"
                 product.variants.append(models.ProductVariant(
                     id=vid, color=v.color, size=v.size, stock=v.stock,
                     sku=v.sku, barcode=v.barcode,
                 ))
+            keep_ids.add(vid)
         for v in list(product.variants):
             if v.id not in keep_ids:
                 product.variants.remove(v)
