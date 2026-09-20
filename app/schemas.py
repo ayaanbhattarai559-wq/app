@@ -221,3 +221,17 @@ class TodaySummary(BaseModel):
     profit: float
     low_stock_count: int
     out_of_stock_count: int
+
+
+TimeframePeriod = Literal["day", "week", "month", "year"]
+
+
+class TimeSeriesPoint(BaseModel):
+    id: str
+    label: str
+    sub_label: Optional[str] = None
+    revenue: float
+    cost: float
+    profit: float
+    units_sold: int
+    highlight: bool = False
