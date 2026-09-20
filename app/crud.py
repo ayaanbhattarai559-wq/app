@@ -1,6 +1,6 @@
 import math
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session, selectinload
@@ -400,21 +400,33 @@ def mark_all_read(db: Session) -> None:
 
 # ---------- Analytics ----------
 
-def today_summary(db: Session) -> schemas.TodaySummary:
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+SHOP_TZ_OFFSET = timedelta(minutes=345)  # Nepal Time is UTC+05:45
 
-    row = db.execute(
+
+def _shop_now() -> datetime:
+    """Current time in the shop's local timezone (timestamps are stored as UTC)."""
+    return datetime.utcnow() + SHOP_TZ_OFFSET
+
+
+def today_summary(db: Session) -> schemas.TodaySummary:
+    day_start_local = _shop_now().replace(hour=0, minute=0, second=0, microsecond=0)
+    day_start_utc = day_start_local - SHOP_TZ_OFFSET
+
+    totals = db.execute(
         select(
-            func.coalesce(func.sum(models.SaleTransactionItem.quantity), 0),
             func.coalesce(func.sum(models.SaleTransaction.total_amount), 0),
             func.coalesce(func.sum(models.SaleTransaction.total_cost), 0),
             func.coalesce(func.sum(models.SaleTransaction.total_profit), 0),
-        )
-        .select_from(models.SaleTransaction)
-        .join(models.SaleTransactionItem)
-        .where(models.SaleTransaction.timestamp >= today_start)
+        ).where(models.SaleTransaction.timestamp >= day_start_utc)
     ).first()
-    units_sold, revenue, cost, profit = row
+    revenue, cost, profit = totals
+
+    units_sold = db.execute(
+        select(func.coalesce(func.sum(models.SaleTransactionItem.quantity), 0))
+        .select_from(models.SaleTransactionItem)
+        .join(models.SaleTransaction)
+        .where(models.SaleTransaction.timestamp >= day_start_utc)
+    ).scalar_one()
 
     low_stock_count = db.execute(
         select(func.count(models.Product.id)).where(
@@ -432,3 +444,141 @@ def today_summary(db: Session) -> schemas.TodaySummary:
         cost=float(cost), profit=float(profit),
         low_stock_count=int(low_stock_count), out_of_stock_count=int(out_of_stock_count),
     )
+
+
+def _fetch_sales(db: Session, start_local: datetime, end_local: datetime):
+    """Every transaction in [start_local, end_local), returned in shop-local time."""
+    stmt = (
+        select(
+            models.SaleTransaction.id,
+            models.SaleTransaction.timestamp,
+            models.SaleTransaction.total_amount,
+            models.SaleTransaction.total_cost,
+            models.SaleTransaction.total_profit,
+            func.coalesce(func.sum(models.SaleTransactionItem.quantity), 0),
+        )
+        .select_from(models.SaleTransaction)
+        .outerjoin(models.SaleTransactionItem)
+        .where(models.SaleTransaction.timestamp >= start_local - SHOP_TZ_OFFSET)
+        .where(models.SaleTransaction.timestamp < end_local - SHOP_TZ_OFFSET)
+        .group_by(
+            models.SaleTransaction.id,
+            models.SaleTransaction.timestamp,
+            models.SaleTransaction.total_amount,
+            models.SaleTransaction.total_cost,
+            models.SaleTransaction.total_profit,
+        )
+    )
+    out = []
+    for _id, ts, amount, cost, profit, units in db.execute(stmt).all():
+        out.append((
+            ts + SHOP_TZ_OFFSET,
+            float(amount or 0), float(cost or 0), float(profit or 0), int(units or 0),
+        ))
+    return out
+
+
+def _hour_label(hour: int) -> str:
+    suffix = "AM" if hour < 12 else "PM"
+    display = hour % 12
+    if display == 0:
+        display = 12
+    return f"{display} {suffix}"
+
+
+def _days_in_month(year: int, month: int) -> int:
+    if month == 12:
+        nxt = datetime(year + 1, 1, 1)
+    else:
+        nxt = datetime(year, month + 1, 1)
+    return (nxt - datetime(year, month, 1)).days
+
+
+def _build_buckets(period: str, now: datetime):
+    """Returns (bucket_meta, start_local, end_local, index_fn)."""
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if period == "day":
+        meta = [
+            {"id": f"d-{h}", "label": _hour_label(h), "sub_label": None}
+            for h in range(0, 24, 2)
+        ]
+        return meta, day_start, day_start + timedelta(days=1), lambda t: t.hour // 2
+
+    if period == "week":
+        start = day_start - timedelta(days=6)
+        meta = []
+        for i in range(7):
+            d = start + timedelta(days=i)
+            meta.append({
+                "id": f"w-{d.strftime('%Y%m%d')}",
+                "label": d.strftime("%a"),
+                "sub_label": d.strftime("%b %d"),
+            })
+        return meta, start, day_start + timedelta(days=1), lambda t: (t.date() - start.date()).days
+
+    if period == "month":
+        start = day_start.replace(day=1)
+        total_days = _days_in_month(start.year, start.month)
+        num_weeks = (total_days + 6) // 7
+        meta = []
+        for i in range(num_weeks):
+            first = i * 7 + 1
+            last = min(total_days, first + 6)
+            meta.append({
+                "id": f"m-w{i + 1}",
+                "label": f"W{i + 1}",
+                "sub_label": f"{start.strftime('%b')} {first}-{last}",
+            })
+        if start.month == 12:
+            end = start.replace(year=start.year + 1, month=1)
+        else:
+            end = start.replace(month=start.month + 1)
+        return meta, start, end, lambda t: min(num_weeks - 1, (t.day - 1) // 7)
+
+    # year
+    start = day_start.replace(month=1, day=1)
+    meta = [
+        {
+            "id": f"y-{m}",
+            "label": datetime(start.year, m, 1).strftime("%b"),
+            "sub_label": str(start.year),
+        }
+        for m in range(1, 13)
+    ]
+    return meta, start, start.replace(year=start.year + 1), lambda t: t.month - 1
+
+
+def get_time_series(db: Session, period: str) -> list[schemas.TimeSeriesPoint]:
+    """Real revenue/cost/profit/units per bucket, straight from sale_transactions."""
+    now = _shop_now()
+    meta, start_local, end_local, index_of = _build_buckets(period, now)
+
+    points = [
+        schemas.TimeSeriesPoint(
+            id=m["id"], label=m["label"], sub_label=m["sub_label"],
+            revenue=0.0, cost=0.0, profit=0.0, units_sold=0, highlight=False,
+        )
+        for m in meta
+    ]
+
+    for ts, amount, cost, profit, units in _fetch_sales(db, start_local, end_local):
+        idx = index_of(ts)
+        if idx < 0 or idx >= len(points):
+            continue
+        p = points[idx]
+        p.revenue += amount
+        p.cost += cost
+        p.profit += profit
+        p.units_sold += units
+
+    for p in points:
+        p.revenue = round(p.revenue, 2)
+        p.cost = round(p.cost, 2)
+        p.profit = round(p.profit, 2)
+
+    best = max(points, key=lambda p: p.revenue, default=None)
+    if best is not None and best.revenue > 0:
+        best.highlight = True
+
+    return points
