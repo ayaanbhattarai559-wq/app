@@ -22,3 +22,13 @@ def checkout(payload: schemas.CheckoutRequest, db: Session = Depends(get_db)):
 @router.get("/recent", response_model=list[schemas.SaleTransactionOut])
 def recent_sales(limit: int = Query(default=50, le=200), db: Session = Depends(get_db)):
     return crud.list_recent_sales(db, limit=limit)
+
+
+@router.delete("/{transaction_id}", status_code=204)
+def delete_sale(transaction_id: str, db: Session = Depends(get_db)):
+    """Deletes a sale record entirely (e.g. test data). Does not restore
+    stock or lower a product's sold count -- do that separately if needed."""
+    try:
+        crud.delete_sale(db, transaction_id)
+    except crud.NotFound as e:
+        raise HTTPException(404, str(e))
