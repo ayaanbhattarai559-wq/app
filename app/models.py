@@ -91,16 +91,23 @@ class SaleTransactionItem(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     transaction_id: Mapped[str] = mapped_column(ForeignKey("sale_transactions.id"))
-    product_id: Mapped[str] = mapped_column(ForeignKey("products.id"))
+    # Nullable + ON DELETE SET NULL: deleting a product must never delete its
+    # sale history. product_name/sku below are a snapshot taken at sale time,
+    # so the receipt still reads correctly even after the product is gone.
+    product_id: Mapped[str | None] = mapped_column(
+        ForeignKey("products.id", ondelete="SET NULL"), nullable=True
+    )
     product_name: Mapped[str] = mapped_column(String(200))
     sku: Mapped[str] = mapped_column(String(60))
     color: Mapped[str | None] = mapped_column(String(60), nullable=True)
     size: Mapped[str | None] = mapped_column(String(20), nullable=True)
     quantity: Mapped[int] = mapped_column(Integer)
-    unit_price: Mapped[float] = mapped_column(Numeric(10, 2))
+    unit_price: Mapped[float] = mapped_column(Numeric(10, 2))  # actual price charged (after discount)
     unit_cost: Mapped[float] = mapped_column(Numeric(10, 2), default=0)
     subtotal: Mapped[float] = mapped_column(Numeric(10, 2))
     profit: Mapped[float] = mapped_column(Numeric(10, 2), default=0)
+    list_price: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)  # price before discount
+    discount_percent: Mapped[float] = mapped_column(Numeric(5, 2), default=0)
 
     transaction: Mapped["SaleTransaction"] = relationship(back_populates="items")
 
@@ -126,7 +133,9 @@ class PurchaseOrderItem(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     po_id: Mapped[str] = mapped_column(ForeignKey("purchase_orders.id"))
-    product_id: Mapped[str] = mapped_column(ForeignKey("products.id"))
+    product_id: Mapped[str | None] = mapped_column(
+        ForeignKey("products.id", ondelete="SET NULL"), nullable=True
+    )
     product_name: Mapped[str] = mapped_column(String(200))
     sku: Mapped[str] = mapped_column(String(60))
     quantity: Mapped[int] = mapped_column(Integer)
