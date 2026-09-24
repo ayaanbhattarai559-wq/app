@@ -89,6 +89,10 @@ class ProductUpdate(BaseModel):
     variants: Optional[list[VariantIn]] = None
 
 
+class NextSkuOut(BaseModel):
+    sku: str
+
+
 class RecentRestockEntry(BaseModel):
     color: str
     size: str
@@ -133,6 +137,9 @@ class SaleItemIn(BaseModel):
     product_id: str
     variant_id: str
     quantity: int = Field(gt=0)
+    # Percentage off this line's retail price, applied at checkout time only
+    # (does not change the product's stored price). 0 = no discount.
+    discount_percent: float = Field(default=0, ge=0, le=100)
 
 
 class CheckoutRequest(BaseModel):
@@ -142,16 +149,21 @@ class CheckoutRequest(BaseModel):
 
 class SaleItemOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    product_id: str
+    # Nullable: stays populated normally, but becomes NULL if the product
+    # was later deleted (see Product ON DELETE SET NULL). product_name/sku
+    # are a snapshot, so the receipt still reads fine either way.
+    product_id: Optional[str] = None
     product_name: str
     sku: str
     color: Optional[str] = None
     size: Optional[str] = None
     quantity: int
-    unit_price: float
+    unit_price: float  # actual price charged, after discount
     unit_cost: float
     subtotal: float
     profit: float
+    list_price: Optional[float] = None  # original price before discount
+    discount_percent: float = 0
 
 
 class SaleTransactionOut(BaseModel):
@@ -181,7 +193,7 @@ class PurchaseOrderCreate(BaseModel):
 
 class POItemOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    product_id: str
+    product_id: Optional[str] = None  # NULL if the product was later deleted
     product_name: str
     sku: str
     quantity: int
