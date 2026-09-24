@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import crud, schemas
@@ -16,6 +17,14 @@ def list_products(
     return crud.list_products(db, search=search, category=category)
 
 
+@router.get("/next-sku", response_model=schemas.NextSkuOut)
+def next_sku(db: Session = Depends(get_db)):
+    """Returns a guaranteed-unique, human-readable SKU (KS-1000, KS-1001, ...)
+    for the "Auto-Gen" button. Must stay ABOVE /{product_id} below, or FastAPI
+    would try to match "next-sku" as a product id."""
+    return {"sku": crud.next_sku(db)}
+
+
 @router.get("/{product_id}", response_model=schemas.ProductOut)
 def get_product(product_id: str, db: Session = Depends(get_db)):
     try:
@@ -26,7 +35,10 @@ def get_product(product_id: str, db: Session = Depends(get_db)):
 
 @router.post("", response_model=schemas.ProductOut, status_code=201)
 def create_product(payload: schemas.ProductCreate, db: Session = Depends(get_db)):
-    return crud.create_product(db, payload)
+    try:
+        return crud.create_product(db, payload)
+    except crud.DuplicateSKU as e:
+        raise HTTPException(409, str(e))
 
 
 @router.put("/{product_id}", response_model=schemas.ProductOut)
@@ -35,6 +47,8 @@ def update_product(product_id: str, payload: schemas.ProductUpdate, db: Session 
         return crud.update_product(db, product_id, payload)
     except crud.NotFound as e:
         raise HTTPException(404, str(e))
+    except crud.DuplicateSKU as e:
+        raise HTTPException(409, str(e))
 
 
 @router.delete("/{product_id}", status_code=204)
@@ -43,6 +57,15 @@ def delete_product(product_id: str, db: Session = Depends(get_db)):
         crud.delete_product(db, product_id)
     except crud.NotFound as e:
         raise HTTPException(404, str(e))
+    except IntegrityError:
+        # Safety net: this fires only if the one-time Aiven migration for
+        # ON DELETE SET NULL hasn't been run yet.
+        raise HTTPException(
+            409,
+            "This product still has linked sales or purchase-order records. "
+            "Run the database migration (see setup notes) to allow deleting "
+            "products that already have history.",
+        )
 
 
 @router.post("/{product_id}/sell", response_model=schemas.SaleTransactionOut)
