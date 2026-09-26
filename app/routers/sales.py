@@ -24,6 +24,21 @@ def recent_sales(limit: int = Query(default=50, le=200), db: Session = Depends(g
     return crud.list_recent_sales(db, limit=limit)
 
 
+@router.post("/return", response_model=schemas.ReturnOut)
+def process_return(payload: schemas.ReturnRequest, db: Session = Depends(get_db)):
+    try:
+        return crud.process_return(db, payload)
+    except crud.NotFound as e:
+        raise HTTPException(404, str(e))
+    except crud.InvalidReturn as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/returns/recent", response_model=list[schemas.ReturnOut])
+def recent_returns(limit: int = Query(default=50, le=200), db: Session = Depends(get_db)):
+    return crud.list_recent_returns(db, limit=limit)
+
+
 @router.delete("/{transaction_id}", status_code=204)
 def delete_sale(transaction_id: str, db: Session = Depends(get_db)):
     """Deletes a sale record entirely (e.g. test data). Does not restore
