@@ -100,6 +100,13 @@ class RecentRestockEntry(BaseModel):
     timestamp: datetime
 
 
+class RecentAdjustmentEntry(BaseModel):
+    delta: int
+    reason: str
+    note: Optional[str] = None
+    timestamp: datetime
+
+
 class ProductOut(ProductBase):
     model_config = ConfigDict(from_attributes=True)
     id: str
@@ -107,6 +114,7 @@ class ProductOut(ProductBase):
     sold_count: int = 0
     variants: list[VariantOut] = Field(default_factory=list)
     recent_restocks: list[RecentRestockEntry] = Field(default_factory=list)
+    recent_adjustments: list[RecentAdjustmentEntry] = Field(default_factory=list)
 
 
 class RestockVariantRequest(BaseModel):
@@ -116,6 +124,8 @@ class RestockVariantRequest(BaseModel):
 
 class AdjustRequest(BaseModel):
     delta: int  # positive or negative, spread proportionally across variants
+    reason: str  # e.g. "damaged", "lost", "recount", "other"
+    note: Optional[str] = None
 
 
 class BulkRestockItem(BaseModel):
