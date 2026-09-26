@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 PaymentMethod = Literal["card", "cash", "contactless"]
 POStatus = Literal["ordered", "shipped", "received"]
 NotifType = Literal["alert", "success", "info"]
+ReturnReason = Literal["wrong_size", "defective", "changed_mind", "wrong_item", "other"]
 
 
 # ---------- Categories ----------
@@ -164,6 +165,7 @@ class CheckoutRequest(BaseModel):
 
 class SaleItemOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+    id: int
     # Nullable: stays populated normally, but becomes NULL if the product
     # was later deleted (see Product ON DELETE SET NULL). product_name/sku
     # are a snapshot, so the receipt still reads fine either way.
@@ -179,7 +181,7 @@ class SaleItemOut(BaseModel):
     profit: float
     list_price: Optional[float] = None  # original price before discount
     discount_percent: float = 0
-
+    returned_quantity: int = 0
 
 class SaleTransactionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -190,7 +192,40 @@ class SaleTransactionOut(BaseModel):
     total_profit: float
     payment_method: PaymentMethod
     items: list[SaleItemOut]
+class ReturnItemIn(BaseModel):
+    sale_item_id: int
+    quantity: int = Field(gt=0)
+    reason: ReturnReason
+    note: Optional[str] = None
 
+
+class ReturnRequest(BaseModel):
+    transaction_id: str
+    items: list[ReturnItemIn]
+    restock: bool = True  # false for damaged/defective items you don't want back on the shelf
+
+
+class ReturnItemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    sale_item_id: int
+    product_name: str
+    sku: str
+    color: Optional[str] = None
+    size: Optional[str] = None
+    quantity: int
+    refund_amount: float
+    reason: str
+    note: Optional[str] = None
+
+
+class ReturnOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    transaction_id: str
+    created_at: datetime
+    refund_amount: float
+    restocked: bool
+    items: list[ReturnItemOut]
 
 # ---------- Purchase Orders ----------
 
