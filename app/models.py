@@ -42,8 +42,10 @@ class Product(Base):
     supplier: Mapped[str | None] = mapped_column(String(200), nullable=True)
     colors: Mapped[list] = mapped_column(JSON, default=list)
     sizes: Mapped[list] = mapped_column(JSON, default=list)
-    # Last 10 restock events, newest first: [{color, size, amount, timestamp}, ...]
+      # Last 10 restock events, newest first: [{color, size, amount, timestamp}, ...]
     recent_restocks: Mapped[list] = mapped_column(JSON, default=list)
+    # Last 10 manual stock adjustments, newest first: [{delta, reason, note, timestamp}, ...]
+    recent_adjustments: Mapped[list] = mapped_column(JSON, default=list)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
