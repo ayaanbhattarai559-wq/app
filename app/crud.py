@@ -28,6 +28,10 @@ class DuplicateSKU(Exception):
         super().__init__(f"SKU '{sku}' is already used by another product")
 
 
+class InvalidReturn(Exception):
+    pass
+
+
 def _product_query():
     return select(models.Product).options(selectinload(models.Product.variants))
 
@@ -381,6 +385,87 @@ def list_recent_sales(db: Session, limit: int = 50):
     stmt = select(models.SaleTransaction).order_by(
         models.SaleTransaction.timestamp.desc()
     ).limit(limit)
+    return db.execute(stmt).scalars().unique().all()
+
+
+def process_return(db: Session, data: schemas.ReturnRequest) -> models.SaleReturn:
+    """Reverses part or all of a completed sale. Restocks the returned units
+    (per-variant, when possible and requested) and nets the refunded
+    amount/cost/profit back out of the original transaction's stored totals --
+    so analytics stay correct with zero changes to the analytics queries."""
+    tx = db.get(models.SaleTransaction, data.transaction_id)
+    if not tx:
+        raise NotFound(f"Sale {data.transaction_id} not found")
+    if not data.items:
+        raise InvalidReturn("Select at least one item to return")
+
+    items_by_id = {i.id: i for i in tx.items}
+    products_cache: dict[str, models.Product | None] = {}
+
+    refund_total = 0.0
+    cost_total = 0.0
+    ret = models.SaleReturn(transaction_id=tx.id, restocked=data.restock)
+
+    for line in data.items:
+        item = items_by_id.get(line.sale_item_id)
+        if not item:
+            raise InvalidReturn(f"Line item {line.sale_item_id} does not belong to sale {tx.id}")
+        remaining = item.quantity - (item.returned_quantity or 0)
+        if line.quantity > remaining:
+            raise InvalidReturn(
+                f"Only {remaining} of {item.product_name} ({item.color}, {item.size}) left to return"
+            )
+
+        refund_amount = round(float(item.unit_price) * line.quantity, 2)
+        cost_amount = round(float(item.unit_cost) * line.quantity, 2)
+        refund_total += refund_amount
+        cost_total += cost_amount
+
+        if data.restock and item.product_id:
+            product = products_cache.get(item.product_id)
+            if item.product_id not in products_cache:
+                try:
+                    product = get_product(db, item.product_id, for_update=True)
+                except NotFound:
+                    product = None
+                products_cache[item.product_id] = product
+            if product is not None:
+                variant = next(
+                    (v for v in product.variants if v.color == item.color and v.size == item.size),
+                    None,
+                )
+                # If the variant was renamed/deleted since the sale, we still
+                # reverse the money below -- we just can't put stock back
+                # against a variant that no longer exists.
+                if variant is not None:
+                    variant.stock += line.quantity
+                product.sold_count = max(0, (product.sold_count or 0) - line.quantity)
+
+        item.returned_quantity = (item.returned_quantity or 0) + line.quantity
+
+        ret.items.append(models.SaleReturnItem(
+            sale_item_id=item.id, product_name=item.product_name, sku=item.sku,
+            color=item.color, size=item.size, quantity=line.quantity,
+            refund_amount=refund_amount, reason=line.reason, note=line.note,
+        ))
+
+    for product in products_cache.values():
+        if product is not None:
+            _resync_total_stock(product)
+
+    tx.total_amount = round(float(tx.total_amount) - refund_total, 2)
+    tx.total_cost = round(float(tx.total_cost) - cost_total, 2)
+    tx.total_profit = round(float(tx.total_profit) - (refund_total - cost_total), 2)
+    ret.refund_amount = round(refund_total, 2)
+
+    db.add(ret)
+    db.commit()
+    db.refresh(ret)
+    return ret
+
+
+def list_recent_returns(db: Session, limit: int = 50):
+    stmt = select(models.SaleReturn).order_by(models.SaleReturn.created_at.desc()).limit(limit)
     return db.execute(stmt).scalars().unique().all()
 
 
