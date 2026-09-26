@@ -110,9 +110,41 @@ class SaleTransactionItem(Base):
     profit: Mapped[float] = mapped_column(Numeric(10, 2), default=0)
     list_price: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)  # price before discount
     discount_percent: Mapped[float] = mapped_column(Numeric(5, 2), default=0)
+    # Cumulative units already returned for this line, so partial returns are
+    # supported and the same units can never be returned twice.
+    returned_quantity: Mapped[int] = mapped_column(Integer, default=0)
 
     transaction: Mapped["SaleTransaction"] = relationship(back_populates="items")
+class SaleReturn(Base):
+    __tablename__ = "sale_returns"
 
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: _uid("ret"))
+    transaction_id: Mapped[str] = mapped_column(ForeignKey("sale_transactions.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    refund_amount: Mapped[float] = mapped_column(Numeric(10, 2), default=0)
+    restocked: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    items: Mapped[list["SaleReturnItem"]] = relationship(
+        back_populates="return_", cascade="all, delete-orphan"
+    )
+
+
+class SaleReturnItem(Base):
+    __tablename__ = "sale_return_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    return_id: Mapped[str] = mapped_column(ForeignKey("sale_returns.id"))
+    sale_item_id: Mapped[int] = mapped_column(ForeignKey("sale_transaction_items.id"))
+    product_name: Mapped[str] = mapped_column(String(200))
+    sku: Mapped[str] = mapped_column(String(60))
+    color: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    size: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    quantity: Mapped[int] = mapped_column(Integer)
+    refund_amount: Mapped[float] = mapped_column(Numeric(10, 2))
+    reason: Mapped[str] = mapped_column(String(30))
+    note: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+    return_: Mapped["SaleReturn"] = relationship(back_populates="items")
 
 class PurchaseOrder(Base):
     __tablename__ = "purchase_orders"
