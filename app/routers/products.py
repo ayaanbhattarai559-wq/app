@@ -90,7 +90,7 @@ def restock_variant(product_id: str, payload: schemas.RestockVariantRequest, db:
 @router.post("/{product_id}/adjust", response_model=schemas.ProductOut)
 def adjust_stock(product_id: str, payload: schemas.AdjustRequest, db: Session = Depends(get_db)):
     try:
-        return crud.adjust_stock(db, product_id, payload.delta)
+        return crud.adjust_stock(db, product_id, payload.delta, payload.reason, payload.note)
     except crud.NotFound as e:
         raise HTTPException(404, str(e))
 
