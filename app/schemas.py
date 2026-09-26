@@ -1,7 +1,7 @@
 from datetime import datetime, date
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 PaymentMethod = Literal["card", "cash", "contactless"]
 POStatus = Literal["ordered", "shipped", "received"]
@@ -115,6 +115,11 @@ class ProductOut(ProductBase):
     variants: list[VariantOut] = Field(default_factory=list)
     recent_restocks: list[RecentRestockEntry] = Field(default_factory=list)
     recent_adjustments: list[RecentAdjustmentEntry] = Field(default_factory=list)
+
+    @field_validator("recent_restocks", "recent_adjustments", mode="before")
+    @classmethod
+    def default_none_to_list(cls, v):
+        return v if v is not None else []
 
 
 class RestockVariantRequest(BaseModel):
