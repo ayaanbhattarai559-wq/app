@@ -278,7 +278,9 @@ def restock_variant(db: Session, product_id: str, variant_id: str, amount: int) 
     return get_product(db, product_id)
 
 
-def adjust_stock(db: Session, product_id: str, delta: int) -> models.Product:
+def adjust_stock(
+    db: Session, product_id: str, delta: int, reason: str, note: str | None = None
+) -> models.Product:
     """Mirrors handleBatchAdjust: spread the delta proportionally across variants."""
     product = get_product(db, product_id, for_update=True)
     num_vars = len(product.variants) or 1
@@ -286,6 +288,13 @@ def adjust_stock(db: Session, product_id: str, delta: int) -> models.Product:
     for v in product.variants:
         v.stock = max(0, v.stock + var_delta)
     _resync_total_stock(product)
+
+    entry = {
+        "delta": delta, "reason": reason, "note": note,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+    product.recent_adjustments = ([entry] + list(product.recent_adjustments or []))[:10]
+
     db.commit()
     return get_product(db, product_id)
 
