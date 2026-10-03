@@ -12,7 +12,10 @@ class Settings(BaseSettings):
     # SSL for external connections. Leave blank for plain local MySQL.
     db_ssl_ca: str = ""
 
-    cors_origins: str = "http://localhost:5173"
+       cors_origins: str = "http://localhost:5173"
+
+    # Shop PIN needed to open the app. Set APP_PIN on Render. Empty = no login.
+    app_pin: str = ""
 
     auto_create_tables: bool = True
     seed_on_startup: bool = True
