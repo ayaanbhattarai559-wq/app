@@ -4,6 +4,7 @@ from datetime import datetime
 from sqlalchemy import (
     String, Integer, Numeric, Boolean, Text, ForeignKey, DateTime, JSON
 )
+from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -35,7 +36,7 @@ class Product(Base):
     stock: Mapped[int] = mapped_column(Integer, default=0)  # denormalized sum of variant stocks
     low_stock_threshold: Mapped[int] = mapped_column(Integer, default=5)
     sold_count: Mapped[int] = mapped_column(Integer, default=0)
-    image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    image_url: Mapped[str | None] = mapped_column(LONGTEXT, nullable=True)
     image_alt: Mapped[str | None] = mapped_column(String(300), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     fabric: Mapped[str | None] = mapped_column(String(150), nullable=True)
